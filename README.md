@@ -3,17 +3,22 @@
 
 An __extremely simple__ and _lightweight_ rich-text editor.
 
-Run this editor on your computer locally or on a server of your choice.
+Edit documents by running this editor on your computer locally or on a server of your choice.
 
-- Edit blog posts, articles, etc. in the same style with which they will be seen at distrubution time.
-
-	- No markdown, text boxes, or ugly UI. What You See Is _Actually_ What You Get.
-
-- Customize multiple style presets for different looks
-
-Output is raw HTML.
+Documents are stored in raw HTML.
 
 After editing, document content can simply be copied to a web server of choice and served statically along with your desired `.css` stylesheet on a website or blog.
+
+
+
+## Features
+
+- Edit blog posts, articles, etc. in the same style with which they will be seen at distrubution time. No markdown, text boxes, or ugly UI.
+
+- Customize multiple style presets for different looks.
+
+- Add your own elements
+
 
 
 ## Table of Contents
