@@ -1,0 +1,12 @@
+{
+  "name": "blog_writer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+	"dev": "npm run serve --prefix client",
+	"build": "npm run build --prefix client"
+  },
+  "author": "",
+  "license": "ISC"
+}

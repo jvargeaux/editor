@@ -1,0 +1,6 @@
+.venv
+**.pyc
+client/node_modules
+client/dist
+documents
+document_backups
