@@ -38,10 +38,15 @@ body {
 	// font-family: "Noto Sans", sans-serif;
 	font-family: "Inter", sans-serif;
 	font-optical-sizing: auto;
-	font-weight: 350;
+	font-weight: 400;
 	line-height: 1.75em;
 	letter-spacing: -0.1px;
 	font-style: normal;
+}
+
+#app {
+	position: relative;
+	width: 100%;
 }
 
 button {

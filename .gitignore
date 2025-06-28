@@ -1,6 +1,10 @@
 .venv
+
+**.DS_Store
 **.pyc
+**.drawio
+**.png
+
+data
 client/node_modules
 client/dist
-documents
-document_backups

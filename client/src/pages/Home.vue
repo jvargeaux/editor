@@ -1,26 +1,73 @@
 <template>
   <div class="home">
-	<h3>Editor</h3>
-	
-	<br>
-	<button
-		@click="editing = !editing"
-		:class="`edit-toggle ${editing ? 'on' : 'off'}`"
-	>{{ editing ? 'Editing On' : 'Editing Off' }}</button>
-	<button
-		@click="saveDocument"
-		class="edit-toggle"
-	>Save</button>
+
 	<br>
 	<br>
-	<br>
+
+
+	<div :class="`document-panel ${is_document_panel_open ? 'open' : ''}`">
+		<span class="documents-title">Documents</span>
+		<button
+			@click="newDocument()"
+		>New</button>
+		<br>
+		<div
+			v-for="document in Object.values(documents)"
+			class="document"
+			@click="fetchDocument(document.id)"
+		>
+			<p>{{ document.title || '(Untitled)' }}</p>
+		</div>
+	</div>
+
+	<div class="toolbar">
+		<button
+			@click="is_document_panel_open = !is_document_panel_open"
+		>Documents</button>
+		<button
+			@click="editing = !editing"
+			:class="`edit-toggle ${editing ? 'on' : 'off'}`"
+		>{{ editing ? 'Editing On' : 'Editing Off' }}</button>
+		<button
+			@click="() => apply_to_selected_nodes('h1', '', null)"
+		>H1</button>
+		<button
+			@click="() => apply_to_selected_nodes('h2', '', null)"
+		>H2</button>
+		<button
+			@click="() => apply_to_selected_nodes('h3', '', null)"
+		>H3</button>
+		<button
+			@click="() => apply_to_selected_nodes('h4', '', null)"
+		>H4</button>
+		<button
+			@click="() => apply_to_selected_nodes('p', '', null)"
+		>P</button>
+		<button
+			@click="() => apply_to_selected_nodes('li', '', 'ul')"
+		>B</button>
+		<button
+			@click="() => test()"
+		>Test</button>
+		<button
+			@click="() => selectionToNode('p', 'node blockquote', null)"
+		>Q</button>
+	</div>
+
+	<div class="save-indicator">
+		<div v-if="save_status == 'pending'" class="saving pending">
+			<div class="saving-loader"></div>
+			<span>Saving...</span>
+		</div>
+		<div v-else-if="save_status == 'success'" class="saving">
+			<span>Last Saved: {{ last_saved }}.</span>
+		</div>
+		<div v-else-if="save_status == 'error'" class="saving error">
+			<span>Connection Error.</span>
+		</div>
+	</div>
 
 	<div id="nodes" :contenteditable="editing">
-		<p class="node header">This is a header</p>
-		<p>This is <span class="bold">highlighted</span> text.</p>
-		<p class="node blockquote">This is a blockquote</p>
-		<p>Suscipit aliquam integer auctor mi nibh pretium ultrices ut, faucibus himenaeos nulla volutpat luctus nisi nullam consequat, rhoncus dui turpis dapibus litora tortor egestas. Duis magnis commodo conubia rutrum venenatis consequat leo cursus urna, massa aliquam donec sapien sociis maecenas pulvinar in nostra nisl, egestas libero phasellus sociosqu mattis neque vulputate a. Suspendisse nulla blandit vitae libero interdum ornare, fringilla varius tempor curabitur eu, praesent volutpat convallis dapibus tellus.</p>
-
 		<!-- <p
 			v-for="(node, index) in nodes"
 			:id="node.id"
@@ -59,6 +106,7 @@
 </template>
 
 <script>
+import api from '@/api'
 
 export default {
   name: 'Home',
@@ -68,91 +116,87 @@ export default {
 
 	data() {
 		return {
-			editing: true,
-			selectedNode: {
-				index: null,
-				id: null
-			},
-			lastID: 99,
-			nodes: [
-				{
-					id: 0,
-					type: 'header',
-					content: [
-						{
-							text: 'Introduction'
-						}
-					]
-				},
-				{
-					id: 1,
-					type: 'paragraph',
-					content: [
-						{
-							text: 'This is the '
-						},
-						{
-							class: 'bold',
-							text: 'first'
-						},
-						{
-							text: ' line.'
-						}
-					]
-				},
-				{
-					id: 2,
-					type: 'blockquote',
-					content: [
-						{
-							text: 'This is a blockquote.'
-						}
-					]
-				},
-				{
-					id: 3,
-					type: 'line',
-				},
-				{
-					id: 4,
-					type: 'paragraph',
-					content: [
-						{
-							text: 'Suscipit aliquam integer auctor mi nibh pretium ultrices ut, faucibus himenaeos nulla volutpat luctus nisi nullam consequat, rhoncus dui turpis dapibus litora tortor egestas. Duis magnis commodo conubia rutrum venenatis consequat leo cursus urna, massa aliquam donec sapien sociis maecenas pulvinar in nostra nisl, egestas libero phasellus sociosqu mattis neque vulputate a. Suspendisse nulla blandit vitae libero interdum ornare, fringilla varius tempor curabitur eu, praesent volutpat convallis dapibus tellus.'
-						}
-					]
-				}
-			],
+			editing: false,
 			undo_history: [],
 			undo_step: 1,
-			max_undo_history: 10
+			max_undo_history: 10,
+			debounce_timepoint: null,
+			DEBOUNCE_TIME: 1000,
+			last_saved: null,
+			save_status: '',
+			documents: {},
+			current_document_id: null,
+			is_document_panel_open: false
 		}
 	},
 
 	methods: {
-		api(endpoint, method, body) {
-			fetch(`/${endpoint}`, {
-				method,
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(body),
-			})
-				.then(r => {
-					return {
-						request: r,
-						json: r.json()
+		debounce() {
+			this.debounce_timepoint = Date.now()
+			return new Promise((resolve, reject) => {
+				window.setTimeout(() => {
+					if (Date.now() > this.debounce_timepoint + this.DEBOUNCE_TIME) {
+						resolve(true)
 					}
-				})
-				.then(( request, json ) => {
-					console.log(request)
-					if (request?.ok) console.log(json)
-				})
+				}, this.DEBOUNCE_TIME)
+			})
+		},
+
+		test() {
+			api(`http://127.0.0.1:5000/test/`, 'POST', {}).then(response => {
+				console.log(response)
+			})
 		},
 
 		saveDocument() {
-			this.api('save/asdfasdfas', 'POST', {
+			this.save_status = 'pending'
+			api(`http://127.0.0.1:5000/save/${this.current_document_id}`, 'POST', {
 				document: document.getElementById('nodes').innerHTML
+			}).then(response => {
+				window.setTimeout(() => {
+					this.save_status = response.ok ? 'success' : 'error'
+					this.last_saved = response.last_saved || ''
+				}, 200)
+			}).then(() => {
+				this.fetchAllDocuments()
+			})
+		},
+
+		fetchDocument(id) {
+			api(`http://127.0.0.1:5000/fetch/${id}`, 'POST', {}).then(response => {
+				console.log(response)
+				if (response.ok) {
+					document.getElementById('nodes').innerHTML = response.document
+					this.save_status = 'success'
+					this.last_saved = response.last_saved || ''
+					this.is_document_panel_open = false
+					this.editing = false
+					this.current_document_id = id
+					window.localStorage.setItem('current_document_id', id)
+				}
+				else {
+					this.save_status = 'error'
+				}
+			})
+		},
+
+		fetchAllDocuments() {
+			api(`http://127.0.0.1:5000/fetch_all`, 'POST', {}).then(response => {
+				console.log(response)
+				this.documents = response.documents || {}
+			})
+		},
+
+		newDocument() {
+			api(`http://127.0.0.1:5000/new`, 'POST', {}).then(response => {
+				console.log(response)
+				this.current_document_id = response.id || null
+				this.save_status = response.ok ? 'success' : 'error'
+				this.last_saved = response.last_saved || ''
+				this.is_document_panel_open = false
+				window.localStorage.setItem('current_document_id', response.id)
+				this.fetchAllDocuments()
+				this.fetchDocument(response.id)
 			})
 		},
 
@@ -356,7 +400,7 @@ export default {
 			]
 		},
 
-		splitNode(selection_info) {
+		_splitNode(selection_info) {
 			const {
 				start_node_index,
 				start_subnode_index,
@@ -456,11 +500,15 @@ export default {
 					// this.replaceSelectedBoldTags('span', 'bold')
 			}
 
+			this.debounce().then(() => {
+				this.saveDocument()
+			})
 		},
 
 		selection_and_range_methods() {
 			const selection = window.getSelection()
 			const range = selection.getRangeAt(0)
+			const node = document.getElementById('nodes')
 
 			// Move cursor to start or end of selection
 			range.collapse(true)  // true = start, false = end
@@ -477,31 +525,329 @@ export default {
 
 			// Delete selection contents
 			range.deleteContents()
+
+			// Merge adjacent text nodes, remove empty nodes
+			node.normalize()
 		},
 
-		selectionToBlock(tag, class_name) {
+		splitNodeAtSelection() {
 			const selection = window.getSelection()
+			const base = selection.baseNode
+			const extent = selection.extentNode
 			const range = selection.getRangeAt(0)
+			const common_ancestor = range.commonAncestorContainer
 
-			// If no selection, select current node
-			if (range.collapsed) {
-				range.selectNode(selection.anchorNode)
+			// Get tag and class of current node
+			const node_type = common_ancestor.nodeName
+			const node_class = common_ancestor.className
+
+			// Take contents of selection
+			const contents = range.extractContents()
+
+			// Split text node, base remains as first node
+			base.splitText(selection.baseOffset)
+
+			// Move newly created second text node into a brand new node
+			const new_split_node = document.createElement(node_type)
+			new_split_node.className = node_class
+			new_split_node.appendChild(base.nextSibling)
+			
+			// Insert after original node
+			base.parentNode.parentNode.insertBefore(new_split_node, base.parentNode.nextSibling)
+			
+			// Move extracted selection contents into another brand new node
+			const new_selection_node = document.createElement(node_type)
+			new_selection_node.className = node_class
+			new_selection_node.appendChild(contents)
+
+			// Insert after original node, placing in between original and split nodes
+			base.parentNode.parentNode.insertBefore(new_selection_node, base.parentNode.nextSibling)
+		},
+
+		splitSelectionWithinNode() {
+			const contents = range.extractContents()
+			range.insertNode(contents)
+		},
+
+		get_parent_node(node) {
+			const node_root = document.getElementById('nodes')
+			for (const child of node_root.childNodes) {
+				if (child.contains(node)) return child
+			}
+		},
+
+		get_sub_parent_node(node) {
+			const node_root = document.getElementById('nodes')
+			for (const child of node_root.childNodes) {
+				if (child.contains(node) && child.hasChildNodes()) {
+					for (const grandchild of child.childNodes) {
+						if (grandchild.contains(node)) return grandchild
+					}
+				}
+			}
+		},
+
+		get_list_parent_node(node, root) {
+			if (!root?.hasChildNodes()) return null
+			for (const child of root.childNodes) {
+				// If node is inside child, search further
+				if (child.contains(node)) {
+					// If node is list item, we found it
+					if (this.is_list_node(child)) return child
+					// Otherwise keep searching recursively on children
+					const matched = this.get_list_parent_node(node, child)
+					// If recursive search finds a match, return immediately
+					if (matched) return matched
+				}
+			}
+			return null
+		},
+
+		is_list_node(node) {
+			return node?.nodeName == 'LI'
+		},
+
+		is_list_container_node(node) {
+			return node?.nodeName == 'UL' || node?.nodeName == 'OL'
+		},
+
+		get_sorted_selection_nodes() {
+			const selection = window.getSelection()
+			const extent_compared_to_base = selection.baseNode.compareDocumentPosition(selection.extentNode)
+
+			// extent is before, base is after
+			if (extent_compared_to_base & Node.DOCUMENT_POSITION_PRECEDING) {
+				return {
+					start: selection.extentNode,
+					end: selection.baseNode
+				}
 			}
 
-			// Get selection content
-			const range_content = range.toString()
+			// base is before, extent is after
+			// or same
+			else {
+				return {
+					start: selection.baseNode,
+					end: selection.extentNode
+				}
+			}
+		},
 
-			// Delete content from document
-			range.deleteContents()
+		get_all_selected_nodes() {
+			// Get properly aligned base and extent selection nodes
+			const selected_nodes = this.get_sorted_selection_nodes()
 
-			// Insert new block element and fill with selection content
+			// If start or end direct parent is a list container, get the individual list item
+			let start_parent = this.get_parent_node(selected_nodes.start)
+			if (this.is_list_container_node(start_parent)) start_parent = this.get_list_parent_node(selected_nodes.start, document.getElementById('nodes'))
+			let end_parent = this.get_parent_node(selected_nodes.end)
+			if (this.is_list_container_node(end_parent)) end_parent = this.get_list_parent_node(selected_nodes.end, document.getElementById('nodes'))
+
+			// If start and end are same node, return it
+			if (start_parent.isSameNode(end_parent)) {
+				return [start_parent]
+			}
+
+			// Search both direct parents and list items until no next sibling or matches end
+			let nodes = []
+			let current_node = start_parent
+			while (current_node && current_node != end_parent) {
+				nodes.push(current_node)
+				// If <ul> or <ol> and has children, investigate children for matching <li>
+				if (this.is_list_container_node(current_node.nextSibling) && current_node.nextSibling.hasChildNodes()) {
+					current_node = current_node.nextSibling.childNodes[0]
+				}
+				// If <li> and no next sibling, go up to parent's next sibling
+				else if (this.is_list_node(current_node) && !current_node.nextSibling) {
+					current_node = current_node.parentNode.nextSibling
+				}
+				// Otherwise, continue search with next sibling
+				else {
+					current_node = current_node.nextSibling
+				}
+			}
+			nodes.push(end_parent)
+
+			// Return combination of all direct parents and list items from start to end
+			return nodes
+		},
+
+		replace_single_node_tag(node, tag, class_name, outer_tag) {
+			// Ignore list nodes
+			if (this.is_list_node(node)) return
+
+			// Select and extract node contents
+			const range = document.createRange()
+			range.selectNodeContents(node)
+			const contents = range.extractContents()
+
+			// Place contents of node into new tag
+			let new_node = document.createElement(tag)
+			new_node.className = class_name
+			new_node.append(contents)
+			if (outer_tag) {
+				const outer_node = document.createElement(outer_tag)
+				outer_node.append(new_node)
+				new_node = outer_node
+			}
+
+			// Insert new node before original & delete original
+			node.parentNode.insertBefore(new_node, node)
+			node.parentNode.removeChild(node)
+		},
+
+		replace_list_node_tag(node, tag, class_name, outer_tag) {
+			// Ignore non-list nodes
+			// if (!this.is_list_node(node)) return
+			console.log(node)
+			return
+
+			// Select and extract node contents
+			window.getSelection().removeAllRanges()
+			const range = document.createRange()
+			range.selectNodeContents(node)
+			const contents = range.extractContents()
+			node.innerHTML = 'a'
+
+			// Add range to selection
+			window.getSelection().addRange(range)
+
+			// After outdentation, this creates a <span> and a <br>
+			// <ul>        ->     <span>
+			//     <li>           <br>
+			// Any list items before and after will be split into separate <ul> or <ol> tags
+
+			// Outdent until node is no longer an <li> node (we've reached root nodes container)
+			// Note: could be multiple nested <ul> or <ol> for indented lists
+			let current_node = node
+			console.log('before while', current_node)
+			while (current_node?.parentNode && this.is_list_container_node(current_node.parentNode)) {
+				document.execCommand('outdent', false, null)
+				current_node = this. get_list_parent_node(window.getSelection().baseNode, document.getElementById('nodes'))
+				console.log(current_node)
+			}
+			// current_node is now null
+
+			// Get temporary <span> node
+			const placement_node = this.get_parent_node(window.getSelection().baseNode)
+
+			// Place contents of original node into new tag
 			const new_node = document.createElement(tag)
 			new_node.className = class_name
-			new_node.innerHTML = range_content
-			range.insertNode(new_node)
+			new_node.append(contents)
 
-			// Set cursor to end of selection
-			range.collapse(false)
+			// Insert contents here before temporary <span> node
+			const nodes_root = document.getElementById('nodes')
+			nodes_root.insertBefore(new_node, placement_node)
+
+			// Delete temporary span node and subsequent <br> node
+			// if (placement_node.nextSibling) nodes_root.removeChild(placement_node.nextSibling)
+			// nodes_root.removeChild(placement_node)
+		},
+
+		apply_to_selected_nodes(tag, class_name, outer_tag) {
+			const all_selected_nodes = this.get_all_selected_nodes()
+
+			// TO FIX: problems with above function this.get_all_selected_nodes() when 2 ul's next to each other
+
+			for (const node of all_selected_nodes) {
+
+				// If list node
+				if (this.is_list_node(node)) {
+					console.log('list node')
+					this.replace_list_node_tag(node, tag, class_name, outer_tag)
+				}
+				
+				// If non-list node (direct parent)
+				else {
+					console.log('non list node')
+					this.replace_single_node_tag(node, tag, class_name, outer_tag)
+				}
+			}
+		},
+
+		selectionToNode(tag, class_name, wrapped_tag) {
+			if (!this.editing) return
+
+			let selection = window.getSelection()
+			let range = selection.getRangeAt(0)
+			let no_selection = range.collapsed
+			let base_parent_node = this.get_parent_node(selection.baseNode)
+			let extent_parent_node = this.get_parent_node(selection.extentNode)
+
+			const is_list = this.is_list_node(base_parent_node) || this.is_list_node(extent_parent_node)
+
+			// If selection is within same parent node, and node is already desired node type, do nothing
+			if (base_parent_node.isSameNode(extent_parent_node)) {
+				if (base_parent_node.nodeName == tag && base_parent_node.className == class_name) {
+					return
+				}
+			}
+
+			// If no selection, select entire node
+			if (no_selection) {
+				if (is_list) {
+					const sub_parent = this.get_sub_parent_node(selection.baseNode)
+					range.selectNodeContents(sub_parent)
+				}
+				else {
+					range.selectNodeContents(base_parent_node)
+				}
+			}
+
+			// If inside list (ul or ol), outdent it back to root node container
+			// Then reapply function to properly convert to desired tag
+			if (is_list) {
+				document.execCommand('outdent', false, null)
+				selection = window.getSelection()
+				range = selection.getRangeAt(0)
+				no_selection = true
+				range.selectNodeContents(selection.baseNode)
+				
+				// Delete <br> created after conversion to span
+				const next_node = selection.baseNode.parentNode.nextSibling
+				if (next_node.nodeName == 'BR') {
+					next_node.parentNode.removeChild(next_node)
+				}
+			}
+			
+			// Cut contents of selection
+			const contents = range.extractContents()
+			
+			// Split node at collapsed selection point if there was a selection
+			if (!no_selection) {
+				document.execCommand('insertParagraph', false, null)
+			}
+
+			// Take parent of newly collapsed selection
+			let parent_node = this.get_parent_node(window.getSelection().baseNode)
+			
+			// Create new node and insert extracted contents into it
+			let new_node
+			if (wrapped_tag) {
+				new_node = document.createElement(wrapped_tag)
+				new_node.className = class_name
+				const new_inner_node = document.createElement(tag)
+				new_inner_node.append(contents.textContent)
+				new_node.append(new_inner_node)
+			}
+			else {
+				new_node = document.createElement(tag)
+				new_node.className = class_name
+				new_node.append(contents.textContent)
+			}
+			
+			// Insert between split nodes if using newly created node
+			parent_node.parentNode.insertBefore(new_node, parent_node)
+			
+			// If there was no selection, we've extracted all contents and are left with empty parent node, delete it
+			if (no_selection) {
+				parent_node.parentNode.removeChild(parent_node)
+			}
+
+			// Set selection
+			window.getSelection().getRangeAt(0).setStart(new_node, 0)
+			window.getSelection().getRangeAt(0).setEnd(new_node, 0)
 		},
 
 		replaceTagRecursive(node, tag, class_name) {
@@ -525,21 +871,27 @@ export default {
 		},
 
 		onKeyDown(event) {
-			const { key, metaKey } = event
+			const { key, metaKey, shiftKey, ctrlKey, altKey } = event
 
 			if (!this.editing) return
 
 			const selection_info = this.getSelectionInfo()
-			
-			if (key == '-') {
+
+			if (key == 'Tab') {
 				event.preventDefault()
 				event.stopPropagation()
-
-				console.log(window.history)
-				console.log(selection_info)
-				this.selectionToBlock('p', 'node blockquote')
-				// this.selectionToInline('p', 'node blockquote')
+				document.execCommand(shiftKey ? 'outdent' : 'indent', false, null)
 			}
+			
+			// if (key == '-') {
+			// 	event.preventDefault()
+			// 	event.stopPropagation()
+
+			// 	console.log(window.history)
+			// 	console.log(selection_info)
+			// 	this.selectionToNode('p', 'node blockquote')
+			// 	// this.selectionToInline('p', 'node blockquote')
+			// }
 
 
 
@@ -592,28 +944,100 @@ export default {
 		window.addEventListener('keydown', this.onKeyDown)
 
 		document.getElementById('nodes').addEventListener('input', this.onEditorInput)
+
+		const current_document_id = window.localStorage.getItem('current_document_id')
+		if (current_document_id) {
+			this.current_document_id = current_document_id
+			this.fetchDocument(current_document_id)
+		}
+	},
+
+	created() {
+		this.fetchAllDocuments()
 	}
 }
 </script>
 
 <style>
 
+button {
+	margin: 0.25rem;
+	padding: 0.5rem 1rem;
+	font-family: 'Inter', sans-serif;
+	font-size: 0.75rem;
+	font-weight: 600;
+	color: #ccc;
+}
+
 .home {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
+	margin: auto;
 	padding: 2rem;
 	width: 100%;
-	min-width: 600px;
-	max-width: 900px;
 }
+
+
+.document-panel {
+	--width: 420px;
+
+	position: fixed;
+	top: 0;
+	left: calc(var(--width) * -1);
+	width: var(--width);
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	padding: 3rem;
+	background-color: rgb(21, 22, 24);
+	z-index: 99;
+	box-shadow: 0px 4px 40px -8px rgba(0,0,0,.5);
+	overflow-y: scroll;
+	transition: left 0.25s;
+
+	&.open {
+		left: 0;
+	}
+
+	.documents-title {
+		font-size: 1rem;
+		font-weight: 600;
+		padding-bottom: 2rem;
+	}
+
+	.document {
+		margin: 0.5rem 0;
+		padding: 0.75rem 1rem;
+		background-color: rgb(35, 36, 38);
+		border-radius: 8px;
+		font-size: 0.9rem;
+		font-weight: 600;
+		cursor: pointer;
+		
+		&:hover {
+			background-color: rgb(42, 43, 45);
+		}
+	}
+}
+
+
+.toolbar {
+	position: fixed;
+	top: 0;
+	padding: 0.5rem 1rem;
+	background-color: rgb(36, 37, 39);
+	z-index: 99;
+}
+
 
 .edit-toggle {
 	&.on {
-		background-color: #5ceda0;
+		background-color: #197243;
 	}
 	&.off {
-		background-color: #ed5c5c;
+		background-color: #9b2626;
 	}
 }
 
@@ -675,13 +1099,74 @@ export default {
 	}
 }
 
-.bold {
+#nodes {
+	position: relative;
+	width: 100%;
+	max-width: 780px;
+	padding-bottom: 8rem;
+}
+
+h1, h2, h3, h4, h5, h6, p {
+	padding: 0;
+}
+
+h1 {
+	margin-top: 3rem;
+	margin-bottom: 1rem;
+	padding: 1rem 0;
+	font-size: 1.25rem;
+	font-weight: 600;
+	color: #fff;
+	/* color: #f34369; */
+	border-bottom: 1px solid #333;
+}
+
+h2 {
+	margin-top: 2rem;
+	margin-bottom: 1rem;
+	padding: 0.75rem 0;
+	font-size: 1.1rem;
+	font-weight: 600;
+	color: #fff;
+	color: #fd597f;
+	color: #868cff;
+	border-bottom: 1px solid #333;
+}
+
+h3 {
+	margin-top: 2rem;
+	margin-bottom: 1.25rem;
+	font-size: 1.25rem;
+	font-weight: 400;
+	color: #fff;
+}
+
+h4 {
+	margin-top: 1.5rem;
+	margin-bottom: 0.75rem;
+	font-size: 1rem;
+	font-weight: 600;
+	color: #fff;
+}
+
+p {
+	margin-bottom: 0.75rem;
+}
+
+b {
 	color: #ff768f;
+	color: #989dff;
+	color: #72fcbc;
+	color: #fff;
 	font-weight: 600;
 }
 
+ul {
+	margin-bottom: 1rem;
+}
+
 .node-toolbar {
-	position: absolute;
+	position: fixed;
 	top: 0;
 	left: 50%;
 	transform: translate(-50%, -100%);
@@ -693,8 +1178,63 @@ export default {
 	}
 }
 
-span {
-	min-height: 1.75rem;
+.save-indicator {
+	position: fixed;
+	top: 1rem;
+	right: 2rem;
+}
+
+.saving {
+	--pending-color: rgb(213, 172, 117);
+	--success-color: rgb(108, 225, 149);
+	--error-color: rgb(244, 96, 114);
+
+	display: flex;
+	justify-content: center;
+	align-items: center;
+
+	span {
+		margin-left: 0.75rem;
+		font-size: 0.75rem;
+		font-weight: 500;
+		color: #aaa;
+	}
+
+	&.pending {
+		span { color: var(--pending-color); }
+		.saving-loader { border-color: var(--pending-color); }
+	}
+
+	&.success {
+		span { color: var(--success-color); }
+		.saving-loader { border-color: var(--success-color); }
+	}
+
+	&.error {
+		span { color: var(--error-color); }
+		.saving-loader { border-color: var(--error-color); }
+	}
+}
+
+@keyframes rotate {
+	0% { transform: rotate(0deg); }
+	100% { transform: rotate(360deg); }
+}
+
+.saving-loader {
+	--size: 1.25rem;
+
+	position: relative;
+	width: var(--size);
+	height: var(--size);
+	border-radius: 100%;
+	border: 2px solid #aaa;
+	border-bottom: 2px solid transparent !important;
+	border-right: 2px solid transparent !important;
+	animation-name: rotate;
+	animation-timing-function: linear;
+	animation-iteration-count: infinite;
+	animation-duration: 0.75s;
 }
 
 </style>
